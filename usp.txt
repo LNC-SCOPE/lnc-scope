@@ -1,0 +1,20 @@
+Unique Selling Proposition Of lnc-SCOPE
+(From structure to function)
+
+CORE USP: Dual-Layer Structural + Sequential Interaction Analysis
+- ViennaRNA: predicts RNA structure but does not directly evaluate miRNA biological targeting.
+- miRNA tools (like seed-only scanners): sequence complementarity but often ignore lncRNA structural accessibility
+- This tool combines both and takes everything into consideration
+
+Unlike conventional tools that focus either on RNA secondary structure or sequence complementarity alone, LNC-Scope integrates structural accessibility with seed-based and thermodynamic miRNA-lncRNA interaction analysis.
+
+Unique features of lnc-Scope include:
+- Structural + Sequential dual analysis
+- Seed-compatible accessibility filtering
+- Functional interpretation (sponge/scaffold)
+- Mutation sensitivity
+- End-to-end lncRNA-specific pipeline
+
+Our platform extends beyond conventional RNA folding by integrating structure-informed accessibility, sequence-level miRNA targeting, thermodynamic scoring, and functional lncRNA interpretation within a single pipeline.
+
+
