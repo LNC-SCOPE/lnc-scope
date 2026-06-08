@@ -1,4 +1,4 @@
-# =========================================================
+# ========================================================
 # LNC-SCOPE FULL PIPELINE
 # PART 1: Custom lncRNA Folding + Accessibility
 # PART 2: miRNA Binding + Functional Prediction
@@ -12,7 +12,6 @@ import os
 # =========================================================
 # PART 1 : CUSTOM RNA FOLDING
 # =========================================================
-
 # -------------------------------
 # ENERGY MODEL
 # -------------------------------
@@ -40,7 +39,6 @@ def stacking_bonus(seq, i, j):
 
     return bonus
 
-
 # -------------------------------
 # PARAMETERS
 # -------------------------------
@@ -52,7 +50,6 @@ UNPAIRED_PENALTY = 0.05
 
 def loop_penalty(length):
     return 0.2 + 0.02 * length
-
 
 # -------------------------------
 # DP FOLDING
@@ -181,7 +178,6 @@ def classify_functional_zones(regions):
 
     return zones
 
-
 # -------------------------------
 # MUTATION SENSITIVITY
 # -------------------------------
@@ -205,7 +201,6 @@ def mutation_sensitivity(seq):
             sensitive_positions.append(i)
 
     return sensitive_positions
-
 
 # =========================================================
 # PART 2 : miRNA MODULE
@@ -393,7 +388,6 @@ else:
 
     print("\nPredicted structure:")
     print(structure)
-
 
 # -------------------------------
 # ANALYSIS
