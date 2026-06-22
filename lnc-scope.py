@@ -346,19 +346,19 @@ print("=== LNC-SCOPE PIPELINE STARTED ===")
 # INPUT
 # -------------------------------
 
-choice = raw_input("Do you have dot-bracket structure? (yes/no): ").strip().lower()
+choice = input("Do you have dot-bracket structure? (yes/no): ").strip().lower()
 
 sequence = ""
 structure = ""
 
 if choice == "yes":
-    structure = raw_input("Paste dot-bracket structure:\n").strip()
+    structure = input("Paste dot-bracket structure:\n").strip()
 
 else:
-    file_choice = raw_input("Do you have FASTA file input? (yes/no): ").strip().lower()
+    file_choice = input("Do you have FASTA file input? (yes/no): ").strip().lower()
 
     if file_choice == "yes":
-        path = raw_input("Enter FASTA file path:\n").strip().strip('"')
+        path = input("Enter FASTA file path:\n").strip().strip('"')
 
         with open(path, "r") as f:
             lines = f.readlines()
@@ -370,7 +370,7 @@ else:
         print(sequence[:60] + "...")
 
     else:
-        sequence = raw_input("Paste RNA sequence:\n").strip().upper()
+        sequence = input("Paste RNA sequence:\n").strip().upper()
         sequence = sequence.replace("T", "U")
 
     print("\nSequence preview:")
