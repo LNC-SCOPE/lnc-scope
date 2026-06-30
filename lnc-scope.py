@@ -1,4 +1,4 @@
-# ========================================================
+# =========================================================
 # LNC-SCOPE FULL PIPELINE
 # PART 1: Custom lncRNA Folding + Accessibility
 # PART 2: miRNA Binding + Functional Prediction
@@ -9,128 +9,23 @@ import time
 import csv
 import os
 
+from turner_folding import fold_turner, can_pair
 # =========================================================
 # PART 1 : CUSTOM RNA FOLDING
 # =========================================================
-# -------------------------------
-# ENERGY MODEL
-# -------------------------------
-
-def pair_energy(a, b):
-    if (a == 'G' and b == 'C') or (a == 'C' and b == 'G'):
-        return -3
-    elif (a == 'A' and b == 'U') or (a == 'U' and b == 'A'):
-        return -2
-    elif (a == 'G' and b == 'U') or (a == 'U' and b == 'G'):
-        return -1
-    return 0
-
-
-def stacking_bonus(seq, i, j):
-    bonus = 0
-
-    if i + 1 < j - 1:
-        if pair_energy(seq[i + 1], seq[j - 1]) < 0:
-            bonus -= 1.5
-
-    if i - 1 >= 0 and j + 1 < len(seq):
-        if pair_energy(seq[i - 1], seq[j + 1]) < 0:
-            bonus -= 1.0
-
-    return bonus
 
 # -------------------------------
-# PARAMETERS
+# TURNER FOLDING WRAPPER
 # -------------------------------
-
-MIN_LOOP = 3
-PAIR_BIAS = -0.3
-UNPAIRED_PENALTY = 0.05
-
-
-def loop_penalty(length):
-    return 0.2 + 0.02 * length
-
-# -------------------------------
-# DP FOLDING
-# -------------------------------
-
-def fold_rna_energy(seq):
-    n = len(seq)
-    dp = [[0 for _ in range(n)] for _ in range(n)]
-
-    for length in range(1, n):
-        for i in range(n - length):
-            j = i + length
-
-            if j - i <= MIN_LOOP:
-                dp[i][j] = 0
-                continue
-
-            best = dp[i + 1][j] + UNPAIRED_PENALTY
-            best = min(best, dp[i][j - 1] + UNPAIRED_PENALTY)
-
-            e = pair_energy(seq[i], seq[j])
-
-            if e < 0:
-                loop_len = j - i - 1
-                penalty = loop_penalty(loop_len)
-                stack = stacking_bonus(seq, i, j)
-
-                best = min(
-                    best,
-                    dp[i + 1][j - 1] + e + penalty + PAIR_BIAS + stack
-                )
-
-            for k in range(i, j):
-                best = min(best, dp[i][k] + dp[k + 1][j])
-
-            dp[i][j] = best
-
-    return dp
-
-
-def traceback_energy(dp, seq, i, j, structure):
-    if i >= j:
-        return
-
-    if dp[i][j] == dp[i + 1][j] + UNPAIRED_PENALTY:
-        traceback_energy(dp, seq, i + 1, j, structure)
-        return
-
-    if dp[i][j] == dp[i][j - 1] + UNPAIRED_PENALTY:
-        traceback_energy(dp, seq, i, j - 1, structure)
-        return
-
-    e = pair_energy(seq[i], seq[j])
-
-    if e < 0:
-        loop_len = j - i - 1
-        penalty = loop_penalty(loop_len)
-        stack = stacking_bonus(seq, i, j)
-
-        if dp[i][j] == dp[i + 1][j - 1] + e + penalty + PAIR_BIAS + stack:
-            structure[i] = '('
-            structure[j] = ')'
-            traceback_energy(dp, seq, i + 1, j - 1, structure)
-            return
-
-    for k in range(i, j):
-        if dp[i][j] == dp[i][k] + dp[k + 1][j]:
-            traceback_energy(dp, seq, i, k, structure)
-            traceback_energy(dp, seq, k + 1, j, structure)
-            return
-
 
 def fold_rna(seq):
-    dp = fold_rna_energy(seq)
-    structure = ['.'] * len(seq)
+    structure, mfe = fold_turner(seq)
+    fold_rna.last_mfe = mfe
+    return structure
 
-    if len(seq) > 0:
-        traceback_energy(dp, seq, 0, len(seq) - 1, structure)
 
-    return ''.join(structure)
-
+def fold_rna_with_energy(seq):
+    return fold_turner(seq)
 
 # -------------------------------
 # ACCESSIBLE REGIONS (6-mer seed)
@@ -178,6 +73,7 @@ def classify_functional_zones(regions):
 
     return zones
 
+
 # -------------------------------
 # MUTATION SENSITIVITY
 # -------------------------------
@@ -201,6 +97,7 @@ def mutation_sensitivity(seq):
             sensitive_positions.append(i)
 
     return sensitive_positions
+
 
 # =========================================================
 # PART 2 : miRNA MODULE
@@ -352,8 +249,9 @@ sequence = ""
 structure = ""
 
 if choice == "yes":
-    structure = input("Paste dot-bracket structure:\n").strip()
+      structure = input("Paste dot-bracket structure: ")
 
+      mfe = float(input("Enter MFE from RNAfold (kcal/mol): "))
 else:
     file_choice = input("Do you have FASTA file input? (yes/no): ").strip().lower()
 
@@ -373,21 +271,23 @@ else:
         sequence = input("Paste RNA sequence:\n").strip().upper()
         sequence = sequence.replace("T", "U")
 
-    print("\nSequence preview:")
-    print(sequence[:60] + "...")
+    structure, mfe = fold_rna_with_energy(sequence)
 
-    # TIMING ADDED HERE (CORRECT PLACE)
-    start = time.time()
-    test = fold_rna(sequence)
-    single_fold = time.time() - start
-
-    print("\nSingle fold time:", round(single_fold, 2), "sec")
-    print("Estimated mutation time:", round((single_fold * (len(sequence)//10))/60, 2), "minutes")
-
-    structure = test
-
-    print("\nPredicted structure:")
+    print("\nPredicted structure (Turner 2004 model):")
     print(structure)
+    print("Predicted MFE:", round(mfe, 2), "kcal/mol")
+
+# -------------------------------
+# FOLD
+# -------------------------------
+
+start = time.time()
+structure = fold_rna_with_energy(sequence)
+
+single_fold = time.time() - start
+
+print("\nSingle fold time:", round(single_fold, 2), "sec")
+print("MFE:", round(mfe, 2), "kcal/mol")
 
 # -------------------------------
 # ANALYSIS
@@ -402,6 +302,7 @@ with open("structure_output.json", "w") as f:
     json.dump({
         "sequence": sequence,
         "structure": structure,
+        "mfe_kcal_mol": mfe,
         "accessible_regions": accessible_regions,
         "functional_zones": functional_zones,
         "mutation_sensitive_positions": sensitive_sites
@@ -430,6 +331,7 @@ hotspots = [i["pos"] for i in scored]
 
 final_output = {
     "lncRNA": "custom_input",
+    "mfe_kcal_mol": mfe,
     "function": function,
     "miRNA": list(set(i["miRNA"] for i in scored)),
     "binding_sites": hotspots,
