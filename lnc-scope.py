@@ -9,7 +9,7 @@ import time
 import csv
 import os
 
-from turner_folding import fold_turner, can_pair
+from turner_folding import fold_turner, can_pair, mutation_sensitivity_fast
 # =========================================================
 # PART 1 : CUSTOM RNA FOLDING
 # =========================================================
@@ -80,24 +80,6 @@ def classify_functional_zones(regions):
 
 def mutate_base(base):
     return {'A': 'U', 'U': 'G', 'G': 'C'}.get(base, 'A')
-
-
-def mutation_sensitivity(seq):
-    if not seq:
-        return []
-
-    original = fold_rna(seq)
-    sensitive_positions = []
-
-    for i in range(0, len(seq), 50):
-        mutated = list(seq)
-        mutated[i] = mutate_base(seq[i])
-
-        if fold_rna(''.join(mutated)) != original:
-            sensitive_positions.append(i)
-
-    return sensitive_positions
-
 
 # =========================================================
 # PART 2 : miRNA MODULE
