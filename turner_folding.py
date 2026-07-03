@@ -56,9 +56,12 @@ INTERNAL_INIT_DEFAULT = 1.7
 
 ML_INIT       = 3.4
 ML_PER_BRANCH = 0.4
+ML_UNPAIRED   = 0.0   # per-unpaired-nt multiloop term; 0 for now, tunable later
 
 MIN_HAIRPIN = 3
 INF = 1e18
+
+MAXLOOP = 28   # max nt searched per side of an internal loop/bulge (was hardcoded to 2)
 
 VALID_PAIRS = {("A","U"),("U","A"),("G","C"),("C","G"),("G","U"),("U","G")}
 
@@ -82,6 +85,19 @@ def internal_loop_energy(s1, s2):
     base = INTERNAL_INIT.get(total, INTERNAL_INIT_DEFAULT)
     return base + min(0.3 * abs(s1 - s2), 3.0)
 
+def _build_il_table(maxloop):
+    table = np.full((maxloop, maxloop), INF, dtype=np.float64)
+    for s1 in range(maxloop):
+        for s2 in range(maxloop):
+            if s1 == 0 and s2 == 0:
+                continue
+            elif s1 == 0 or s2 == 0:
+                table[s1, s2] = BULGE_INIT.get(max(s1, s2), BULGE_INIT_DEFAULT)
+            else:
+                table[s1, s2] = internal_loop_energy(s1, s2)
+    return table
+
+IL_TABLE = _build_il_table(MAXLOOP)
 # ----------------------------------------------------------------
 # PART 2 — FAST FOLD (numpy-accelerated)
 # ----------------------------------------------------------------
@@ -108,8 +124,9 @@ def fold_turner(seq):
                 if can_pair(seq[i+1], seq[j-1]):
                     stack_en[i, j] = get_stack_energy(seq, i, j)
 
-    V = np.full((n, n), INF, dtype=np.float64)
-    W = np.zeros((n, n), dtype=np.float64)
+    V  = np.full((n, n), INF, dtype=np.float64)
+    W  = np.zeros((n, n), dtype=np.float64)
+    WM = np.full((n, n), INF, dtype=np.float64)
 
     for length in range(1, n):
         for i in range(n - length):
@@ -127,29 +144,42 @@ def fold_turner(seq):
                     if inner < INF:
                         V[i, j] = min(V[i, j], stack_en[i, j] + inner)
 
-                # Case 3: internal loop / bulge
-                for si in range(1, 4):
-                    for sj in range(1, 4):
-                        ni, nj = i+si, j-sj
-                        if ni >= nj or not pair_ok[ni, nj]: continue
-                        if (nj - ni - 1) < MIN_HAIRPIN: continue
-                        s1, s2 = si-1, sj-1
-                        if s1==0 or s2==0:
-                            il_e = BULGE_INIT.get(max(s1,s2), BULGE_INIT_DEFAULT)
-                        else:
-                            il_e = internal_loop_energy(s1, s2)
-                        il_e += aup
-                        if V[ni, nj] < INF:
-                            V[i, j] = min(V[i, j], il_e + V[ni, nj])
+                # Case 3: internal loop / bulge (widened to MAXLOOP, vectorized)
+                lo_ni = i + 1
+                hi_ni = min(i + MAXLOOP, n - 1)
+                lo_nj = max(j - MAXLOOP, 0)
+                hi_nj = j - 1
+                R = hi_ni - lo_ni + 1
+                C = hi_nj - lo_nj + 1
 
-                # Case 4: multiloop bifurcation (numpy slice)
+                if R > 0 and C > 0:
+                    s1_vals = np.arange(R)
+                    s2_vals = (j - 1 - lo_nj) - np.arange(C)
+
+                    valid_s = (s1_vals[:, None] < MAXLOOP) & (s2_vals[None, :] >= 0) & (s2_vals[None, :] < MAXLOOP)
+                    ni_grid = lo_ni + s1_vals[:, None]
+                    nj_grid = lo_nj + np.arange(C)[None, :]
+                    gap_ok  = (nj_grid - ni_grid - 1) >= MIN_HAIRPIN
+                    pair_sub = pair_ok[lo_ni:lo_ni+R, lo_nj:lo_nj+C]
+                    total_ok = (s1_vals[:, None] + s2_vals[None, :]) > 0
+
+                    mask = valid_s & gap_ok & pair_sub & total_ok
+                    if np.any(mask):
+                        s1_clip = np.clip(s1_vals, 0, MAXLOOP - 1)
+                        s2_clip = np.clip(s2_vals, 0, MAXLOOP - 1)
+                        il_energy = IL_TABLE[np.ix_(s1_clip, s2_clip)]
+                        V_sub = V[lo_ni:lo_ni+R, lo_nj:lo_nj+C]
+                        candidate = il_energy + aup + V_sub
+                        candidate = np.where(mask & (V_sub < INF), candidate, INF)
+                        best_il = float(np.min(candidate))
+                        if best_il < INF:
+                            V[i, j] = min(V[i, j], best_il)
+
+                # Case 4: multiloop (now actually charges ML_INIT + per-branch cost)
                 if j > i + 2:
-                    w_l = W[i+1, i+1:j-1]
-                    w_r = W[i+2:j,  j-1 ]
-                    if len(w_l) == len(w_r) > 0:
-                        best = float(np.min(w_l + w_r))
-                        if best < INF:
-                            V[i, j] = min(V[i, j], best + aup)
+                    interior_wm = WM[i+1, j-1] if (i+1 <= j-1) else INF
+                    if interior_wm < INF:
+                        V[i, j] = min(V[i, j], ML_INIT + aup + interior_wm)
 
             # W[i,j]
             best_w = min(
@@ -165,6 +195,24 @@ def fold_turner(seq):
                     best_w = min(best_w, float(np.min(w_l + w_r)))
             W[i, j] = best_w
 
+            # WM[i,j]: mirrors W's computation but for "inside a multiloop" context
+            wm_candidates = []
+            if i + 1 <= j:
+                wm_candidates.append(WM[i+1, j] + ML_UNPAIRED)
+            if j - 1 >= i:
+                wm_candidates.append(WM[i, j-1] + ML_UNPAIRED)
+            if pair_ok[i, j] and V[i, j] < INF:
+                wm_candidates.append(V[i, j] + ML_PER_BRANCH + au_pen[i, j])
+            if j > i:
+                wm_l = WM[i, i:j]
+                wm_r = WM[i+1:j+1, j]
+                if len(wm_l) == len(wm_r) > 0:
+                    best_wm_bif = float(np.min(wm_l + wm_r))
+                    if best_wm_bif < INF:
+                        wm_candidates.append(best_wm_bif)
+            if wm_candidates:
+                WM[i, j] = min(wm_candidates)
+
     # Traceback (runs once, negligible time)
     structure = ['.'] * n
 
@@ -177,22 +225,22 @@ def fold_turner(seq):
         if pair_ok[i+1, j-1] and (j-i-1) > MIN_HAIRPIN:
             if V[i+1,j-1] < INF and abs(V[i,j] - stack_en[i,j] - V[i+1,j-1]) < 1e-4:
                 tb_V(i+1, j-1); return
-        for si in range(1,4):
-            for sj in range(1,4):
-                ni, nj = i+si, j-sj
-                if ni>=nj or not pair_ok[ni,nj]: continue
-                s1,s2 = si-1,sj-1
-                if s1==0 or s2==0:
-                    il_e = BULGE_INIT.get(max(s1,s2), BULGE_INIT_DEFAULT)
-                else:
-                    il_e = internal_loop_energy(s1,s2)
-                il_e += aup
-                if V[ni,nj]<INF and abs(V[i,j]-il_e-V[ni,nj])<1e-4:
-                    tb_V(ni,nj); return
-        for k in range(i+1, j):
-            if W[i+1,k]<INF and W[k+1,j-1]<INF:
-                if abs(V[i,j]-W[i+1,k]-W[k+1,j-1]-aup)<1e-4:
-                    tb_W(i+1,k); tb_W(k+1,j-1); return
+        for s1 in range(MAXLOOP):
+            ni = i + 1 + s1
+            if ni >= j: break
+            for s2 in range(MAXLOOP):
+                nj = j - 1 - s2
+                if ni >= nj: break
+                if s1 == 0 and s2 == 0: continue
+                if not pair_ok[ni, nj]: continue
+                if (nj - ni - 1) < MIN_HAIRPIN: continue
+                il_e = IL_TABLE[s1, s2]
+                if V[ni,nj] < INF and abs(V[i,j] - il_e - aup - V[ni,nj]) < 1e-4:
+                    tb_V(ni, nj); return
+        if j > i + 2:
+            interior_wm = WM[i+1, j-1] if (i+1 <= j-1) else INF
+            if interior_wm < INF and abs(V[i,j] - ML_INIT - aup - interior_wm) < 1e-4:
+                tb_WM(i+1, j-1); return
 
     def tb_W(i, j):
         if i >= j: return
@@ -203,6 +251,19 @@ def fold_turner(seq):
             lw=W[i,k]; rw=W[k+1,j]
             if lw<INF and rw<INF and abs(W[i,j]-lw-rw)<1e-4:
                 tb_W(i,k); tb_W(k+1,j); return
+
+    def tb_WM(i, j):
+        if i >= j: return
+        if i+1<=j and WM[i+1,j]<INF and abs(WM[i,j]-(WM[i+1,j]+ML_UNPAIRED))<1e-4:
+            tb_WM(i+1,j); return
+        if j-1>=i and WM[i,j-1]<INF and abs(WM[i,j]-(WM[i,j-1]+ML_UNPAIRED))<1e-4:
+            tb_WM(i,j-1); return
+        if pair_ok[i,j] and V[i,j]<INF and abs(WM[i,j]-(V[i,j]+ML_PER_BRANCH+au_pen[i,j]))<1e-4:
+            tb_V(i,j); return
+        for k in range(i,j):
+            lw=WM[i,k]; rw=WM[k+1,j]
+            if lw<INF and rw<INF and abs(WM[i,j]-lw-rw)<1e-4:
+                tb_WM(i,k); tb_WM(k+1,j); return
 
     if n > 0:
         tb_W(0, n-1)
