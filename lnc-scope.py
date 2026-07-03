@@ -47,20 +47,41 @@ def find_accessible_regions(structure, seed_length=6, min_open=4):
 
     return regions
 
+def merge_accessible_regions(regions):
+    if not regions:
+        return []
+
+    regions = sorted(regions, key=lambda r: r["start"])
+    merged = []
+    current = {"start": regions[0]["start"], "end": regions[0]["end"]}
+
+    for r in regions[1:]:
+        if r["start"] <= current["end"]:
+            current["end"] = max(current["end"], r["end"])
+        else:
+            merged.append(current)
+            current = {"start": r["start"], "end": r["end"]}
+    merged.append(current)
+
+    for m in merged:
+        m["length"] = m["end"] - m["start"]
+
+    return merged
+
 
 # -------------------------------
 # FUNCTIONAL ZONES
 # -------------------------------
 
-def classify_functional_zones(regions):
+def classify_functional_zones(regions, seed_length=7):
     zones = []
 
     for region in regions:
         l = region["length"]
 
-        if l >= 10:
+        if l >= seed_length * 3:
             zone_type = "Sponge Zone"
-        elif l <= 4:
+        elif l < seed_length:
             zone_type = "Scaffold Candidate"
         else:
             zone_type = "Hybrid Zone"
@@ -68,6 +89,7 @@ def classify_functional_zones(regions):
         zones.append({
             "start": region["start"],
             "end": region["end"],
+            "length": l,
             "type": zone_type
         })
 
@@ -232,8 +254,11 @@ structure = ""
 
 if choice == "yes":
       structure = input("Paste dot-bracket structure: ")
-
       mfe = float(input("Enter MFE from RNAfold (kcal/mol): "))
+      sequence = input("Paste the corresponding RNA sequence:\n").strip().upper()
+      sequence = sequence.replace("T", "U")
+      if len(sequence) != len(structure):
+          print(f"WARNING: sequence length ({len(sequence)}) != structure length ({len(structure)}) — indices will misalign.")
 else:
     file_choice = input("Do you have FASTA file input? (yes/no): ").strip().lower()
 
@@ -253,31 +278,28 @@ else:
         sequence = input("Paste RNA sequence:\n").strip().upper()
         sequence = sequence.replace("T", "U")
 
+# -------------------------------
+# FOLD (only if structure wasn't already provided)
+# -------------------------------
+
+if choice != "yes":
+    start = time.time()
     structure, mfe = fold_rna_with_energy(sequence)
+    single_fold = time.time() - start
 
-    print("\nPredicted structure (Turner 2004 model):")
-    print(structure)
+    print("\nSingle fold time:", round(single_fold, 2), "sec")
+
+    print("\nPredicted structure (Turner 2004 model)")
     print("Predicted MFE:", round(mfe, 2), "kcal/mol")
-
-# -------------------------------
-# FOLD
-# -------------------------------
-
-start = time.time()
-structure = fold_rna_with_energy(sequence)
-
-single_fold = time.time() - start
-
-print("\nSingle fold time:", round(single_fold, 2), "sec")
-print("MFE:", round(mfe, 2), "kcal/mol")
 
 # -------------------------------
 # ANALYSIS
 # -------------------------------
 
-accessible_regions = find_accessible_regions(structure)
-functional_zones = classify_functional_zones(accessible_regions)
-sensitive_sites = mutation_sensitivity(sequence)
+accessible_regions = find_accessible_regions(structure, seed_length=7, min_open=5)
+merged_regions = merge_accessible_regions(accessible_regions)
+functional_zones = classify_functional_zones(merged_regions, seed_length=7)
+sensitive_sites = mutation_sensitivity_fast(sequence, window=80, min_delta=0.5)
 
 # Save structural stage
 with open("structure_output.json", "w") as f:
@@ -286,6 +308,7 @@ with open("structure_output.json", "w") as f:
         "structure": structure,
         "mfe_kcal_mol": mfe,
         "accessible_regions": accessible_regions,
+        "merged_regions": merged_regions,
         "functional_zones": functional_zones,
         "mutation_sensitive_positions": sensitive_sites
     }, f, indent=4)
@@ -319,6 +342,7 @@ final_output = {
     "binding_sites": hotspots,
     "confidence": confidence,
     "accessible_regions": accessible_regions,
+    "merged_regions": merged_regions,
     "functional_zones": functional_zones
 }
 
@@ -333,8 +357,10 @@ with open("final_lnc_scope_output.json", "w") as f:
 # RESULTS
 # -------------------------------
 
-print("\n=== FINAL OUTPUT ===")
-print(json.dumps(final_output, indent=4))
+print("\n=== PIPELINE COMPLETE ===")
+print("Function prediction:", final_output["function"])
+print("Confidence:", round(final_output["confidence"], 2))
+print("Results saved to final_lnc_scope_output.json")
 
 print("\nMatches found:", len(matches))
 print("High-confidence interactions:", len(scored))
